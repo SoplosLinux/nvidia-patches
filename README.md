@@ -1,8 +1,3 @@
-Para la licencia, dado que es un parche sobre código NVIDIA que ya tiene licencia MIT, lo más coherente es **MIT**.
-
-Aquí el README:
-
-```markdown
 # NVIDIA 580 patches for Linux kernel 7.0
 
 Patches to fix NVIDIA driver 580 DKMS build failures on Linux kernel 7.0.
@@ -37,4 +32,3 @@ sudo dkms install nvidia/580.126.20 -k $(uname -r)
 ## License
 
 MIT
-```
