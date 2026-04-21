@@ -1,0 +1,59 @@
+--- nvidia-orig/usr/src/nvidia-580.126.20/nvidia/nv-mmap.c	2026-02-18 07:05:43.000000000 +0100
++++ /usr/src/nvidia-580.126.20/nvidia/nv-mmap.c	2026-04-21 21:51:07.606081256 +0200
+@@ -868,17 +868,24 @@
+ 
+     nvl->safe_to_mmap = safe_to_mmap;
+ }
++#ifndef VM_REFCNT_EXCLUDE_READERS_FLAG
++#define VM_REFCNT_EXCLUDE_READERS_FLAG VMA_LOCK_OFFSET
++#else
++#define NV_VMA_WRITE_LOCKED_ONE_ARG 1
++#endif
++
++
+ 
+ #if !NV_CAN_CALL_VMA_START_WRITE
+ static NvBool nv_vma_enter_locked(struct vm_area_struct *vma, NvBool detaching)
+ {
+-    NvU32 tgt_refcnt = VMA_LOCK_OFFSET;
++    NvU32 tgt_refcnt = VM_REFCNT_EXCLUDE_READERS_FLAG;
+     NvBool interrupted = NV_FALSE;
+     if (!detaching)
+     {
+         tgt_refcnt++;
+     }
+-    if (!refcount_add_not_zero(VMA_LOCK_OFFSET, &vma->vm_refcnt))
++    if (!refcount_add_not_zero(VM_REFCNT_EXCLUDE_READERS_FLAG, &vma->vm_refcnt))
+     {
+         return NV_FALSE;
+     }
+@@ -908,7 +915,7 @@
+     if (interrupted)
+     {
+         // Clean up on error: release refcount and dep_map
+-        refcount_sub_and_test(VMA_LOCK_OFFSET, &vma->vm_refcnt);
++        refcount_sub_and_test(VM_REFCNT_EXCLUDE_READERS_FLAG, &vma->vm_refcnt);
+         rwsem_release(&vma->vmlock_dep_map, _RET_IP_);
+         return NV_FALSE;
+     }
+@@ -924,7 +931,11 @@
+ {
+     NvU32 mm_lock_seq;
+     NvBool locked;
++#ifdef NV_VMA_WRITE_LOCKED_ONE_ARG
++    if (__is_vma_write_locked(vma))
++#else
+     if (__is_vma_write_locked(vma, &mm_lock_seq))
++#endif
+         return;
+ 
+     locked = nv_vma_enter_locked(vma, NV_FALSE);
+@@ -933,7 +944,7 @@
+     if (locked)
+     {
+         NvBool detached;
+-        detached = refcount_sub_and_test(VMA_LOCK_OFFSET, &vma->vm_refcnt);
++        detached = refcount_sub_and_test(VM_REFCNT_EXCLUDE_READERS_FLAG, &vma->vm_refcnt);
+         rwsem_release(&vma->vmlock_dep_map, _RET_IP_);
+         WARN_ON_ONCE(detached);
+     }
