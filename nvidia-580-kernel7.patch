@@ -1,5 +1,5 @@
---- nvidia-orig/usr/src/nvidia-580.126.20/nvidia/nv-mmap.c	2026-02-18 07:05:43.000000000 +0100
-+++ /usr/src/nvidia-580.126.20/nvidia/nv-mmap.c	2026-04-21 21:51:07.606081256 +0200
+--- a/nvidia/nv-mmap.c
++++ b/nvidia/nv-mmap.c
 @@ -868,17 +868,24 @@
  
      nvl->safe_to_mmap = safe_to_mmap;
