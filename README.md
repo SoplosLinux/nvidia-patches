@@ -19,7 +19,7 @@ NVIDIA driver 580.126.20 fails to compile on Linux kernel 7.0 due to VMA API cha
 ## Apply patch
 
 ```bash
-sudo patch -p0 -d /usr/src/nvidia-580.126.20 < nvidia-580-kernel7.patch
+sudo patch -p1 -d /usr/src/nvidia-580.126.20 < nvidia-580-kernel7.patch
 sudo dkms build nvidia/580.126.20 -k $(uname -r)
 sudo dkms install nvidia/580.126.20 -k $(uname -r)
 ```
