@@ -19,12 +19,8 @@
 # Affected:  nvidia-dkms 550.x, Debian testing kernels >= 7.0.4 with BTF_MODULES=y
 # Not affected: custom kernels without CONFIG_DEBUG_INFO_BTF_MODULES=y
 #
-# Differences vs 580.x fix:
-#   - Targets nvidia-dkms 550.x (drivers de soporte extendido / legacy-next)
-#   - La rama 550 es más conservadora; si tienes Turing o Ampere y no necesitas
-#     las últimas features de 580, 550 es la opción estable recomendada por Debian.
-#   - La causa raíz y el fix son idénticos: el bug está en el Makefile de NVIDIA,
-#     no en los módulos del driver en sí.
+# Nota: en Debian el paquete 550 se registra en dkms como "nvidia-current",
+#       no como "nvidia". El script detecta ambas formas.
 #
 # Usage: sudo bash nvidia-550-deb14-pahole-fix.sh [kernel-version]
 #   kernel-version defaults to the newest installed 7.0.4+deb14 headers
@@ -69,25 +65,28 @@ EOF
     echo "Created."
 fi
 
-# Find nvidia 550.x version in dkms — filtra explícitamente la rama 550
-NVIDIA_VER=$(dkms status 2>/dev/null | grep -oP 'nvidia/\K550[0-9.]+' | head -1)
+# Detectar nombre y versión del módulo nvidia en dkms.
+# En Debian 550.x el paquete se llama "nvidia-current", no "nvidia".
+# Formato de dkms status: "nvidia-current/550.163.01, 6.x.x+deb14-amd64, x86_64: installed"
+DKMS_ENTRY=$(dkms status 2>/dev/null | grep -E '^nvidia(-current)?/' | grep '/550\.' | head -1)
 
-# Fallback: si solo hay un nvidia en dkms y es 550.x tómalo igualmente
-if [ -z "$NVIDIA_VER" ]; then
-    NVIDIA_VER=$(dkms status 2>/dev/null | grep -oP 'nvidia/\K[0-9.]+' | grep '^550' | head -1)
+if [ -z "$DKMS_ENTRY" ]; then
+    echo "WARNING: Could not detect nvidia 550.x in dkms." >&2
+    echo "Check with: sudo dkms status | grep nvidia" >&2
+    echo "Run manually: sudo dkms install nvidia-current/<version> -k ${KERNEL}-amd64" >&2
+    exit 1
 fi
 
-if [ -z "$NVIDIA_VER" ]; then
-    echo "WARNING: Could not detect nvidia 550.x version in dkms, skipping rebuild."
-    echo "Check with: dkms status | grep nvidia"
-    echo "Run manually: sudo dkms install nvidia/<version> -k ${KERNEL}-amd64"
-    exit 0
-fi
+# Extraer "nvidia-current" y "550.163.01" por separado
+NVIDIA_NAME=$(echo "$DKMS_ENTRY" | grep -oP '^nvidia(-current)?')
+NVIDIA_VER=$(echo "$DKMS_ENTRY"  | grep -oP '^nvidia(-current)?/\K[0-9.]+')
+
+echo "Detected: ${NVIDIA_NAME}/${NVIDIA_VER}"
 
 KERNEL_FULL="${KERNEL}-amd64"
-echo "Rebuilding nvidia/${NVIDIA_VER} for kernel ${KERNEL_FULL}..."
-dkms remove "nvidia/${NVIDIA_VER}" -k "$KERNEL_FULL" 2>/dev/null || true
-dkms install "nvidia/${NVIDIA_VER}" -k "$KERNEL_FULL"
+echo "Rebuilding ${NVIDIA_NAME}/${NVIDIA_VER} for kernel ${KERNEL_FULL}..."
+dkms remove "${NVIDIA_NAME}/${NVIDIA_VER}" -k "$KERNEL_FULL" 2>/dev/null || true
+dkms install "${NVIDIA_NAME}/${NVIDIA_VER}" -k "$KERNEL_FULL"
 
 echo ""
 echo "Done. Check output above for errors."
