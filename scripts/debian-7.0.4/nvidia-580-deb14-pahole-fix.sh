@@ -62,13 +62,17 @@ EOF
     echo "Created."
 fi
 
-# Find nvidia version in dkms
-NVIDIA_VER=$(dkms status 2>/dev/null | grep -oP 'nvidia/\K[0-9.]+' | head -1)
-if [ -z "$NVIDIA_VER" ]; then
-    echo "WARNING: Could not detect nvidia version in dkms, skipping rebuild."
-    echo "Run manually: sudo dkms install nvidia/<version> -k ${KERNEL}-amd64"
-    exit 0
+# Find nvidia 580.x version in dkms
+DKMS_ENTRY=$(dkms status 2>/dev/null | grep -E '^nvidia/' | grep '/580\.' | head -1)
+if [ -z "$DKMS_ENTRY" ]; then
+    echo "WARNING: Could not detect nvidia 580.x in dkms, skipping rebuild." >&2
+    echo "Check with: sudo dkms status | grep nvidia" >&2
+    echo "Run manually: sudo dkms install nvidia/<version> -k ${KERNEL}-amd64" >&2
+    exit 1
 fi
+
+NVIDIA_VER=$(echo "$DKMS_ENTRY" | grep -oP '^nvidia/\K[0-9.]+')
+echo "Detected: nvidia/${NVIDIA_VER}"
 
 KERNEL_FULL="${KERNEL}-amd64"
 echo "Rebuilding nvidia/${NVIDIA_VER} for kernel ${KERNEL_FULL}..."

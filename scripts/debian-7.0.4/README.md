@@ -62,7 +62,7 @@ sudo bash nvidia-deb14-pahole-fix.sh 7.0.4+deb14
 
 | Component | Version |
 |-----------|---------|
-| nvidia-dkms | 580.x |
+| nvidia-dkms | 550.x, 580.x |
 | Kernel | Debian testing >= 7.0.4 with `CONFIG_DEBUG_INFO_BTF_MODULES=y` |
 | pahole | 1.31 |
 

@@ -1,40 +1,53 @@
-# NVIDIA 580 patches for Linux kernel 7.0
+# NVIDIA Patches for Linux kernel 7.0
 
-Patches to fix NVIDIA driver 580 DKMS build failures on Linux kernel 7.0.
-Compatible with kernel 6.19.x and 7.0.x.
+Collection of NVIDIA 550/580 DKMS fixes and patch files for Linux 6.19 / 7.0 kernels.
 
-## Problem
+## Repository structure
 
-NVIDIA driver 580.126.20 fails to compile on Linux kernel 7.0 due to VMA API changes:
+- `patches/`
+  - Standalone patch files for NVIDIA DKMS sources.
+- `scripts/debian-7.0.4/`
+  - Debian 7.0.4+ fixes for NVIDIA 550/580 DKMS build failures.
+- `scripts/debian-7.0.7/`
+  - Debian 7.0.7+ fixes for NVIDIA 550/580 DKMS builds with `CONFIG_DEBUG_INFO_BTF_MODULES=y`.
 
-- `VMA_LOCK_OFFSET` removed, replaced by `VM_REFCNT_EXCLUDE_READERS_FLAG`
-- `__is_vma_write_locked()` signature changed from 2 arguments to 1
+## Files
 
-## Affected
+- `patches/nvidia-580-kernel7.patch`
+  - Patch for NVIDIA 580 against Linux kernel 7.0.
+- `scripts/debian-7.0.4/nvidia-550-deb14-pahole-fix.sh`
+  - Fixes the Debian 7.0.4+ `pahole`/BTF interaction for NVIDIA 550.x DKMS.
+- `scripts/debian-7.0.4/nvidia-580-deb14-pahole-fix.sh`
+  - Fixes the Debian 7.0.4+ `pahole`/BTF interaction for NVIDIA 580.x DKMS.
+- `scripts/debian-7.0.7/nvidia-550-deb14-btf-fix.sh`
+  - Patches NVIDIA 550 DKMS to disable BTF module generation on Debian 7.0.7+.
+- `scripts/debian-7.0.7/nvidia-580-deb14-btf-fix.sh`
+  - Patches NVIDIA 580 DKMS to disable BTF module generation on Debian 7.0.7+.
 
-- Driver: nvidia-kernel-dkms 580.126.20-1
-- GPUs: Maxwell and older (GTX 900 series and below) — last supported by driver 580
-- Kernels: 7.0+ (patch is backwards compatible with 6.19.x)
+## Usage
 
-## Apply patch
-
-Download `nvidia-580-kernel7.patch` and from the directory where you saved it run:
+1. Apply the patch directly (replace the version with your installed one):
 
 ```bash
-sudo patch -p1 -d /usr/src/nvidia-580.126.20 < nvidia-580-kernel7.patch
+NVIDIA_VER=$(dkms status 2>/dev/null | grep -oP 'nvidia/\K[0-9.]+' | head -1)
+sudo patch -p1 -d /usr/src/nvidia-${NVIDIA_VER} < patches/nvidia-580-kernel7.patch
 ```
 
-Then rebuild and reinstall the DKMS module for your running kernel:
+2. Run the Debian 7.0.4 fix script for your driver version:
 
 ```bash
-sudo dkms build nvidia/580.126.20 -k $(uname -r)
-sudo dkms install nvidia/580.126.20 -k $(uname -r)
+sudo bash scripts/debian-7.0.4/nvidia-580-deb14-pahole-fix.sh
+# or for NVIDIA 550:
+sudo bash scripts/debian-7.0.4/nvidia-550-deb14-pahole-fix.sh
 ```
 
-## Tested on
+3. Run the Debian 7.0.7 BTF fix for your driver version:
 
-- Linux 6.19.13 ✓
-- Linux 7.0.0 ✓
+```bash
+sudo bash scripts/debian-7.0.7/nvidia-580-deb14-btf-fix.sh
+# or for NVIDIA 550:
+sudo bash scripts/debian-7.0.7/nvidia-550-deb14-btf-fix.sh
+```
 
 ## License
 
