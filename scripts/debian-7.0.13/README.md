@@ -1,17 +1,14 @@
-# nvidia-deb14-btf-fix (kernel 7.0.7+)
+# nvidia-deb14-btf-fix (kernel 7.0.13+)
 
-Fix for NVIDIA DKMS failing to build on Debian kernel 7.0.7+deb14 and later (up to 7.0.12).
-
-> For Debian 7.0.13+, use the scripts in `../debian-7.0.13/` instead.
+Fix for NVIDIA DKMS failing to build on Debian kernel 7.0.13+deb14 and later.
 
 ## The problem
 
-After installing `linux-headers-7.0.7+deb14-amd64` (or any Debian kernel between 7.0.7
-and 7.0.12), DKMS fails to build the nvidia module:
+After installing `linux-headers-7.0.13+deb14-amd64`, DKMS fails to build the nvidia module:
 
 ```
 Building module(s)........................(bad exit status: 2)
-Error! Bad return status for module build on kernel: 7.0.7+deb14-amd64 (x86_64)
+Error! Bad return status for module build on kernel: 7.0.13+deb14-amd64 (x86_64)
 ```
 
 The actual error buried in the build log:
@@ -25,15 +22,9 @@ make[4]: *** [scripts/Makefile.modfinal:62: nvidia-modeset.ko] Error 1
 
 ## Root cause
 
-Debian kernel 7.0.7 ships with `CONFIG_DEBUG_INFO_BTF_MODULES=y`, which causes the kernel
-build system to invoke `gen-btf.sh` via a make rule in `Makefile.modfinal`. The make
-variable expansion of `cmd_btf_ko` passes an awk program through the `escsq/make-cmd`
-machinery, generating a command-line awk invocation with a quote character that awk
-rejects as invalid.
-
-This is a build system incompatibility between the Debian 7.0.7+ kernel headers and the
-NVIDIA DKMS build. It does not affect driver functionality, nor Soplos custom kernels
-built without `CONFIG_DEBUG_INFO_BTF_MODULES=y`.
+Same as 7.0.7: Debian kernel ships with `CONFIG_DEBUG_INFO_BTF_MODULES=y`, causing a build
+system incompatibility between the kernel headers and the NVIDIA DKMS build. The `cmd_btf_ko`
+make variable expansion generates a quoted awk invocation that awk rejects.
 
 ## The fix
 
@@ -80,7 +71,7 @@ sudo dkms install nvidia/<version> -k $(uname -r)
 | Component | Version |
 |-----------|---------|
 | nvidia-kernel-dkms | 550.x, 580.x, 590.x, 610.x |
-| Kernel | Debian testing 7.0.7 – 7.0.12 with `CONFIG_DEBUG_INFO_BTF_MODULES=y` |
+| Kernel | Debian testing 7.0.13+ with `CONFIG_DEBUG_INFO_BTF_MODULES=y` |
 
 **Not affected:** Soplos custom kernels compiled without `CONFIG_DEBUG_INFO_BTF_MODULES=y`.
 
