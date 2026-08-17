@@ -11,7 +11,11 @@ Collection of NVIDIA DKMS fixes and patch files for Soplos Linux kernels (7.x) a
 | NVIDIA DKMS fails on Debian kernel 7.0.7+ (same BTF error, different path) | `scripts/debian-7.0.7/` |
 | NVIDIA DKMS fails on Debian kernel 7.0.13+ (same BTF error) | `scripts/debian-7.0.13/` |
 
-> Soplos kernel installer applies `patches/` automatically when installing or updating kernels.
+> `soplos-kernel-installer` does **not** fetch from this repo — it carries its own embedded copy
+> of the Fix 1 patch in `core/nvidia_dkms_patch.py` (applied automatically to `/usr/src/nvidia-*/`
+> at kernel install time, `#ifndef`-guarded so it's a safe no-op on kernels that don't need it).
+> This repo's `patches/` files are the reference copy for manual/standalone use — if you touch the
+> logic, keep both in sync by hand, there is no code linking them together.
 > The `scripts/debian-*/` fixes are for users running **Debian stock kernels** alongside NVIDIA drivers.
 
 ---
@@ -77,6 +81,10 @@ esac
 
 The patch uses `#ifndef` guards so it is safe to apply on any kernel version — it is a no-op
 on kernels where the old symbols still exist.
+
+Verified 2026-08-17: `VM_REFCNT_EXCLUDE_READERS_FLAG` (`include/linux/mm_types.h`) and
+`__is_vma_write_locked()` (`include/linux/mmap_lock.h`, single-argument form) are byte-identical
+between kernel 7.1 and 7.2 — no update needed for 7.2.
 
 ---
 
