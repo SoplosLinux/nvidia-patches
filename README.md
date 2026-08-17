@@ -7,6 +7,7 @@ Collection of NVIDIA DKMS fixes and patch files for Soplos Linux kernels (7.x) a
 | Situation | Fix needed |
 |-----------|-----------|
 | NVIDIA DKMS fails on Soplos kernel 7.x (`VMA_LOCK_OFFSET` / `__is_vma_write_locked` errors) | `patches/nvidia-*-kernel7.patch` |
+| NVIDIA DKMS fails on Soplos kernel 7.2+ (`implicit declaration of function 'strncpy'` in `os-interface.c`) | `patches/nvidia-string-h-kernel7.2.patch` |
 | NVIDIA DKMS fails on Debian kernel 7.0.4+ (`awk: invalid char '''` in BTF build) | `scripts/debian-7.0.4/` |
 | NVIDIA DKMS fails on Debian kernel 7.0.7+ (same BTF error, different path) | `scripts/debian-7.0.7/` |
 | NVIDIA DKMS fails on Debian kernel 7.0.13+ (same BTF error) | `scripts/debian-7.0.13/` |
@@ -15,7 +16,8 @@ Collection of NVIDIA DKMS fixes and patch files for Soplos Linux kernels (7.x) a
 > of the Fix 1 patch in `core/nvidia_dkms_patch.py` (applied automatically to `/usr/src/nvidia-*/`
 > at kernel install time, `#ifndef`-guarded so it's a safe no-op on kernels that don't need it).
 > This repo's `patches/` files are the reference copy for manual/standalone use — if you touch the
-> logic, keep both in sync by hand, there is no code linking them together.
+> logic, keep both in sync by hand, there is no code linking them together. Same applies to Fix 4
+> below (`os-interface.c` / `NV_STRING_H_PATCH` in `core/nvidia_dkms_patch.py`).
 > The `scripts/debian-*/` fixes are for users running **Debian stock kernels** alongside NVIDIA drivers.
 
 ---
@@ -28,6 +30,8 @@ patches/
   nvidia-580-kernel7.patch      — VMA locking API fix for NVIDIA 580.x on kernel 7.x
   nvidia-590-kernel7.patch      — VMA locking API fix for NVIDIA 590.x on kernel 7.x
   nvidia-610-kernel7.patch      — VMA locking API fix for NVIDIA 610.x on kernel 7.x
+  nvidia-string-h-kernel7.2.patch — missing <linux/string.h> fix for os-interface.c on kernel 7.2+
+                                     (version-independent, applies to any NVIDIA driver branch)
 
 scripts/
   debian-7.0.4/
@@ -85,6 +89,34 @@ on kernels where the old symbols still exist.
 Verified 2026-08-17: `VM_REFCNT_EXCLUDE_READERS_FLAG` (`include/linux/mm_types.h`) and
 `__is_vma_write_locked()` (`include/linux/mmap_lock.h`, single-argument form) are byte-identical
 between kernel 7.1 and 7.2 — no update needed for 7.2.
+
+---
+
+## Fix 4 — missing `<linux/string.h>` (Soplos kernel 7.2+)
+
+**Error in DKMS make.log:**
+```
+nvidia/os-interface.c: In function 'os_get_current_process_name':
+nvidia/os-interface.c:732:5: error: implicit declaration of function 'strncpy' [-Wimplicit-function-declaration]
+  732 |     strncpy(buf, current->comm, len - 1);
+nvidia/os-interface.c:39:1: note: 'strncpy' is defined in header '<string.h>'; this is probably fixable by adding '#include <string.h>'
+```
+
+**Root cause:** `os_get_current_process_name()` in `nvidia/os-interface.c` calls `strncpy()` but
+the file never includes `<linux/string.h>` directly — it relied on some other kernel header
+(reached transitively through `nv-linux.h`) to pull it in. Starting with kernel 7.2 that header
+no longer does so, and GCC treats an implicit function declaration as a hard error, not a warning.
+Unrelated to the VMA locking issue in Fix 1 — different file, different API, different kernel
+version boundary (7.2, not 7.0).
+
+**Fix:** Add `#include <linux/string.h>` to `nvidia/os-interface.c`.
+
+```bash
+sudo patch --fuzz=5 -p1 -d /usr/src/nvidia-${NVIDIA_VER} < patches/nvidia-string-h-kernel7.2.patch
+```
+
+Version-independent — the missing include is the same regardless of NVIDIA driver branch
+(550/580/590/610), so there is only one patch file for this fix, unlike Fix 1.
 
 ---
 
