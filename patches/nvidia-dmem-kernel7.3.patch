@@ -1,0 +1,18 @@
+--- a/kernel-open/nvidia/os-interface.c
++++ b/kernel-open/nvidia/os-interface.c
+@@ -2818,7 +2818,17 @@
+ void* NV_API_CALL os_dmem_cgroup_register_region(NvU64 size, const char *name)
+ {
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
++    struct dmem_cgroup_init init = {
++        .size = size,
++        .ops  = NULL,
++        .reclaim_priv = NULL,
++    };
++    void *region = dmem_cgroup_register_region(&init, name);
++#else
+     void *region = dmem_cgroup_register_region(size, name);
++#endif
+     if (IS_ERR(region))
+     {
+         return NULL;

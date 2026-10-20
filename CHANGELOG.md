@@ -8,6 +8,25 @@ All notable changes to this project will be documented in this file.
 > today reflect file timestamps, not commit history (git is not used to
 > inspect this repo's history).
 
+## 1.4.0 — 2026-10-20
+
+### Added
+
+- **Fix 5** — `dmem_cgroup_register_region()` new signature on Soplos kernel 7.3+
+  (`patches/nvidia-dmem-kernel7.3.patch`).
+  Kernel commit `e11640b9cea4` changed the first argument from a bare `u64 size`
+  to `const struct dmem_cgroup_init *`; NVIDIA 610 (open driver) passes `size`
+  directly, which GCC rejects with `-Wint-conversion`. The fix wraps the call
+  site with `#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)` and fills
+  `struct dmem_cgroup_init { .size = size, .ops = NULL, .reclaim_priv = NULL }`.
+  Field name `.size` confirmed against the real header
+  (`linux-headers-7.3.0-soplos-bore-ntsync-v4/include/linux/cgroup_dmem.h`).
+  Only affects NVIDIA 610 with the open driver (Turing / RTX 2000+); branches
+  550/580/590 and the proprietary driver do not define `NV_USE_DMEM_CGROUP_API`
+  and are completely unaffected.
+- Same logic added to `core/nvidia_dkms_patch.py` in `soplos-kernel-installer`
+  (`NV_DMEM_CGROUP_INIT_PATCH`), applied automatically at kernel install time.
+
 ## 1.3.0 — 2026-08-17
 
 ### Added

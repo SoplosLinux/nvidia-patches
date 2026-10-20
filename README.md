@@ -8,6 +8,7 @@ Collection of NVIDIA DKMS fixes and patch files for Soplos Linux kernels (7.x) a
 |-----------|-----------|
 | NVIDIA DKMS fails on Soplos kernel 7.x (`VMA_LOCK_OFFSET` / `__is_vma_write_locked` errors) | `patches/nvidia-*-kernel7.patch` |
 | NVIDIA DKMS fails on Soplos kernel 7.2+ (`implicit declaration of function 'strncpy'` in `os-interface.c`) | `patches/nvidia-string-h-kernel7.2.patch` |
+| NVIDIA DKMS fails on Soplos kernel 7.3+ (`-Wint-conversion` en `dmem_cgroup_register_region`, `os-interface.c`) | `patches/nvidia-dmem-kernel7.3.patch` |
 | NVIDIA DKMS fails on Debian kernel 7.0.4+ (`awk: invalid char '''` in BTF build) | `scripts/debian-7.0.4/` |
 | NVIDIA DKMS fails on Debian kernel 7.0.7+ (same BTF error, different path) | `scripts/debian-7.0.7/` |
 | NVIDIA DKMS fails on Debian kernel 7.0.13+ (same BTF error) | `scripts/debian-7.0.13/` |
@@ -32,6 +33,8 @@ patches/
   nvidia-610-kernel7.patch      — VMA locking API fix for NVIDIA 610.x on kernel 7.x
   nvidia-string-h-kernel7.2.patch — missing <linux/string.h> fix for os-interface.c on kernel 7.2+
                                      (version-independent, applies to any NVIDIA driver branch)
+  nvidia-dmem-kernel7.3.patch   — dmem_cgroup_register_region() API fix for NVIDIA 610 (open)
+                                     on kernel 7.3+ (only affects the open driver, Turing/RTX and newer)
 
 scripts/
   debian-7.0.4/
@@ -117,6 +120,43 @@ sudo patch --fuzz=5 -p1 -d /usr/src/nvidia-${NVIDIA_VER} < patches/nvidia-string
 
 Version-independent — the missing include is the same regardless of NVIDIA driver branch
 (550/580/590/610), so there is only one patch file for this fix, unlike Fix 1.
+
+---
+
+## Fix 5 — `dmem_cgroup_register_region()` nueva firma (Soplos kernel 7.3+)
+
+**Afecta a:** NVIDIA 610 con el **driver abierto** (`nvidia-open`), tarjetas Turing / RTX 2000 en adelante. El driver propietario y las ramas 550/580/590 no usan esta ruta de código.
+
+**Error en DKMS make.log:**
+```
+nvidia/os-interface.c:2820:48: error: passing argument 1 of 'dmem_cgroup_register_region'
+  makes pointer from integer without a cast [-Wint-conversion]
+```
+
+**Causa raíz:** El commit del kernel `e11640b9cea4` ("cgroup/dmem: Introduce struct dmem_cgroup_init
+for region initialization") cambió el primer argumento de `dmem_cgroup_register_region()`:
+
+- **Antes (kernel ≤ 7.2):** `dmem_cgroup_register_region(u64 size, const char *name_fmt, ...)`
+- **Ahora (kernel ≥ 7.3):** `dmem_cgroup_register_region(const struct dmem_cgroup_init *init, const char *name_fmt, ...)`
+
+La estructura (confirmada en `include/linux/cgroup_dmem.h` de kernel 7.3):
+```c
+struct dmem_cgroup_init {
+    u64 size;
+    const struct dmem_cgroup_ops *ops;
+    void *reclaim_priv;
+};
+```
+
+NVIDIA 610 pasa `size` directamente como primer argumento; GCC lo rechaza con `-Wint-conversion` en kernel 7.3+.
+
+**Fix:** Aplicar el parche, que envuelve la llamada en un guard `LINUX_VERSION_CODE`:
+
+```bash
+sudo patch --fuzz=5 -p1 -d /usr/src/nvidia-${NVIDIA_VER}/kernel-open < patches/nvidia-dmem-kernel7.3.patch
+```
+
+La rama `#else` conserva la llamada original intacta para kernel ≤ 7.2, por lo que el parche es seguro en cualquier versión. Las ramas 550/580/590 no se ven afectadas porque el bloque `#if defined(NV_USE_DMEM_CGROUP_API)` no existe en esas fuentes.
 
 ---
 
