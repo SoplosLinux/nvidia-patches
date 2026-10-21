@@ -25,6 +25,15 @@ All notable changes to this project will be documented in this file.
   both), and the patch applies cleanly to the original sources with `patch --fuzz=5 -p1`. Not loaded on
   hardware, and kernel 7.1 was not tested.
 
+- **Fix 7** — NVIDIA 590 open modules (590.48.01, `nvidia-open-590`) on kernels 7.2+
+  (`patches/nvidia-590-kernel7.2-compat.patch`, applied from `kernel-open/` after Fix 1). It carries the
+  Fix 6 changes (`of_gpio.h` block, five `strncpy()` replacements, renamed DRM names and five forced
+  `nvidia-drm` probes) and backports two `nvidia-uvm` fixes that NVIDIA 610 already has: the `page_free`
+  to `folio_free` callback rename in `struct dev_pagemap_ops` and the three-argument
+  `zone_device_page_init()`, through two new `conftest.sh` probes. Compile-tested only: it builds all five
+  modules against `7.3.0-soplos-bore-ntsync-v4` and `7.2.11-soplos-bore-ntsync-v4`; the unpatched sources fail.
+  Not loaded on hardware, and 590.44.01 and the proprietary 590 package were not tested.
+
 ### Changed
 
 - README: Fix 4 now carries a correction. The `strncpy()` failure on 7.2+ is not a missing

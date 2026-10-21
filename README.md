@@ -10,6 +10,7 @@ Collection of NVIDIA DKMS fixes and patch files for Soplos Linux kernels (7.x) a
 | NVIDIA DKMS fails on Soplos kernel 7.2+ (`implicit declaration of function 'strncpy'` in `os-interface.c`) | `patches/nvidia-string-h-kernel7.2.patch` |
 | NVIDIA DKMS fails on Soplos kernel 7.3+ (`-Wint-conversion` en `dmem_cgroup_register_region`, `os-interface.c`) | `patches/nvidia-dmem-kernel7.3.patch` |
 | NVIDIA 550 (Debian `nvidia-kernel-dkms`) fails on kernel 7.2+ (`linux/of_gpio.h` missing, `strncpy` undeclared, `drm_atomic_state` errors in `nvidia-drm`) | `patches/nvidia-550-kernel7.2-compat.patch` |
+| NVIDIA 590 (open modules, `nvidia-open-590`) fails on kernel 7.2+ (`linux/of_gpio.h` missing, `strncpy` undeclared, `drm_atomic_state` errors, `page_free` / `zone_device_page_init` errors in `nvidia-uvm`) | `patches/nvidia-590-kernel7.patch` and `patches/nvidia-590-kernel7.2-compat.patch` |
 | NVIDIA DKMS fails on Debian kernel 7.0.4+ (`awk: invalid char '''` in BTF build) | `scripts/debian-7.0.4/` |
 | NVIDIA DKMS fails on Debian kernel 7.0.7+ (same BTF error, different path) | `scripts/debian-7.0.7/` |
 | NVIDIA DKMS fails on Debian kernel 7.0.13+ (same BTF error) | `scripts/debian-7.0.13/` |
@@ -38,6 +39,8 @@ patches/
                                      on kernel 7.3+ (only affects the open driver, Turing/RTX and newer)
   nvidia-550-kernel7.2-compat.patch — of_gpio.h, strncpy and DRM atomic commit fixes for NVIDIA 550
                                      (Debian) on kernel 7.2+, compile-tested on 7.3
+  nvidia-590-kernel7.2-compat.patch — of_gpio.h, strncpy, DRM atomic commit and nvidia-uvm fixes for the
+                                     NVIDIA 590 open modules on kernel 7.2+, compile-tested on 7.2.11 and 7.3
 
 scripts/
   debian-7.0.4/
@@ -172,7 +175,7 @@ La rama `#else` conserva la llamada original intacta para kernel ≤ 7.2, por lo
 ## Fix 6 — NVIDIA 550 on kernels 7.1 to 7.3 (`of_gpio.h`, `strncpy`, DRM atomic commit)
 
 **Affects:** NVIDIA 550.163.01 as shipped by Debian (`nvidia-kernel-dkms`, proprietary kernel modules).
-NVIDIA 590.48.01 has the same first two problems and is not patched here yet. NVIDIA 610 already
+NVIDIA 590.48.01 has the same problems plus two more in `nvidia-uvm`; see Fix 7. NVIDIA 610 already
 carries all of these fixes upstream.
 
 **Errors in DKMS make.log:**
@@ -214,6 +217,46 @@ stops at the first failing object, `strncpy()` in `os-interface.c`); patched, it
 `nvidia-modeset.ko`, `nvidia-drm.ko`, `nvidia-uvm.ko` and `nvidia-peermem.ko` on both. The patch applies cleanly to the
 original sources with `printf '%s' | patch --fuzz=5 -p1 -d <dir>`, as the Soplos tools do. The modules were not loaded on
 hardware, and kernel 7.1 was not tested.
+
+---
+
+## Fix 7 — NVIDIA 590 open modules on kernels 7.2+ (`of_gpio.h`, `strncpy`, DRM atomic commit, `nvidia-uvm`)
+
+**Affects:** NVIDIA 590.48.01 open kernel modules (`nvidia-open-590`, from the NVIDIA CUDA repository, sources under
+`kernel-open/`). It also needs Fix 1 (`patches/nvidia-590-kernel7.patch`), which is a separate patch.
+
+**Errors in DKMS make.log:**
+```
+common/inc/nv-linux.h:1717: fatal error: linux/of_gpio.h: No such file or directory
+nvidia-uvm/uvm_pmm_gpu.c:3063: error: 'const struct dev_pagemap_ops' has no member named 'page_free'
+nvidia-uvm/uvm_hmm.c:2143: error: too few arguments to function 'zone_device_page_init'; expected 3, have 1
+```
+
+**Root cause:** the three kernel changes described under Fix 6 (the `of_gpio.h` removal, the `strncpy()` removal and
+the `drm_atomic_state` rename), plus two changes in `nvidia-uvm` that NVIDIA 610 already handles upstream:
+
+1. `struct dev_pagemap_ops` renamed the `page_free` callback to `folio_free`, which takes a `struct folio *`.
+2. `zone_device_page_init()` now takes the `dev_pagemap` and an order in addition to the page.
+
+The patch adds the `of_gpio.h` compatibility block, replaces the five `strncpy()` calls, maps the renamed DRM names and
+forces the five `nvidia-drm` probes, exactly as in Fix 6. For `nvidia-uvm` it backports the two `conftest.sh` probes that
+610 ships (`dev_pagemap_ops_has_folio_free` and `zone_device_page_init_has_pgmap_and_order_args`), registers them in
+`nvidia-uvm.Kbuild`, adds the `folio_free` wrappers for the three pagemap operation tables in `uvm_pmm_gpu.c`, and
+wraps `zone_device_page_init()` in `uvm_hmm.c`. All of it is selected by the probes or by `LINUX_VERSION_CODE`, so the
+build does not change on older kernels.
+
+**Fix:** apply Fix 1 and then this patch from the `kernel-open/` directory of the DKMS source tree:
+
+```bash
+sudo patch --fuzz=5 -p1 -d /usr/src/nvidia-590.48.01/kernel-open < patches/nvidia-590-kernel7.patch
+sudo patch --fuzz=5 -p1 -d /usr/src/nvidia-590.48.01/kernel-open < patches/nvidia-590-kernel7.2-compat.patch
+```
+
+**Verified 2026-10-22 (compile only):** `nvidia-kernel-open-dkms 590.48.01-1` from the CUDA `debian13` repository,
+patched from the original sources with Fix 1 and this patch exactly as above, built with gcc 16.2 against
+`7.3.0-soplos-bore-ntsync-v4` and `7.2.11-soplos-bore-ntsync-v4`: `nvidia.ko`, `nvidia-modeset.ko`, `nvidia-drm.ko`,
+`nvidia-uvm.ko` and `nvidia-peermem.ko` on both. Unpatched, the build fails on 7.3. The modules were not loaded on
+hardware, 590.44.01 was not tested, and neither was the proprietary (non-open) 590 package.
 
 ---
 
