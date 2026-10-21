@@ -8,6 +8,30 @@ All notable changes to this project will be documented in this file.
 > today reflect file timestamps, not commit history (git is not used to
 > inspect this repo's history).
 
+## 1.5.0 — 2026-10-21
+
+### Added
+
+- **Fix 6** — NVIDIA 550 (Debian `nvidia-kernel-dkms`, 550.163.01) on kernels 7.2+
+  (`patches/nvidia-550-kernel7.2-compat.patch`). Three independent kernel changes broke it:
+  `linux/of_gpio.h` was removed (present in 7.0, absent from 7.1), `strncpy()` was removed from
+  `linux/string.h` (present in 7.1, absent from 7.2), and `struct drm_atomic_state` was renamed
+  `struct drm_atomic_commit` in 7.2 together with its helpers. The patch adds the `of_gpio.h`
+  compatibility block that NVIDIA 610 already carries, replaces the five `strncpy()` calls, maps the
+  renamed DRM names, and forces five `nvidia-drm` configure-time probes that look for the old struct
+  and therefore report the pre-7.2 behavior. All of it is version-guarded or behavior-preserving.
+  Compile-tested only: Debian `nvidia-kernel-source 550.163.01-5.1` builds all five modules against the
+  headers of `7.3.0-soplos-bore-ntsync-v4` and of `7.2.11-soplos-bore-ntsync-v4` (unpatched it fails on
+  both), and the patch applies cleanly to the original sources with `patch --fuzz=5 -p1`. Not loaded on
+  hardware, and kernel 7.1 was not tested.
+
+### Changed
+
+- README: Fix 4 now carries a correction. The `strncpy()` failure on 7.2+ is not a missing
+  `#include <linux/string.h>`: the prototype itself was removed from the kernel header, so adding the
+  include does not help sources that still call `strncpy()` (550.163.01 and 590.48.01 do; 610 already
+  uses `strscpy()`).
+
 ## 1.4.1 — 2026-10-21
 
 ### Fixed

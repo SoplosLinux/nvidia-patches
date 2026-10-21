@@ -1,0 +1,186 @@
+--- a/common/inc/nv-linux.h
++++ b/common/inc/nv-linux.h
+@@ -2038,7 +2038,71 @@
+ #endif
+ 
+ #if defined(NV_LINUX_OF_GPIO_H_PRESENT)
++#if __has_include(<linux/of_gpio.h>)
+ #include <linux/of_gpio.h>
++#else
++#include <linux/gpio/driver.h>
++
++static inline int __to_hwgpio(const struct gpio_device *gdev,
++                              const struct of_phandle_args *gpiospec)
++{
++#if defined(CONFIG_OF_GPIO)
++    /*
++     * Use the chip's of_xlate callback to translate the DT GPIO
++     * specifier into a linear offset.  Tegra GPIO controllers encode
++     * port and pin in args[0] and of_xlate sums per-port pin counts
++     * to produce the real offset.
++     */
++    struct gpio_chip *chip = gpio_device_get_chip(gdev);
++
++    if (chip->of_xlate)
++        return chip->of_xlate(chip, gpiospec, NULL);
++#endif
++
++    return gpiospec->args[0];
++}
++
++/*
++ * of_get_named_gpio() was removed along with linux/of_gpio.h by commit
++ * 51aaf65bbd21 ("gpio: of: Remove <linux/of_gpio.h>"). Provide a compat
++ * implementation using the remaining public GPIO APIs.
++ */
++static inline int of_get_named_gpio(const struct device_node *np,
++                                    const char *propname, int index)
++{
++    struct of_phandle_args gpiospec;
++    struct gpio_device *gdev;
++    struct gpio_desc *desc;
++    int ret, hwgpio;
++
++    if (!np)
++        return -ENOENT;
++
++    ret =
++        of_parse_phandle_with_args_map(np, propname, "gpio", index, &gpiospec);
++    if (ret)
++        return ret;
++
++    gdev = gpio_device_find_by_fwnode(of_fwnode_handle(gpiospec.np));
++    of_node_put(gpiospec.np);
++    if (!gdev)
++        return -EPROBE_DEFER;
++
++    hwgpio = __to_hwgpio(gdev, &gpiospec);
++    if (hwgpio < 0) {
++        gpio_device_put(gdev);
++        return hwgpio;
++    }
++
++    desc = gpio_device_get_desc(gdev, hwgpio);
++    gpio_device_put(gdev);
++
++    if (IS_ERR(desc))
++        return PTR_ERR(desc);
++
++    return desc_to_gpio(desc);
++}
++#endif
+ #endif
+ 
+ #if defined(NV_LINUX_OF_DEVICE_H_PRESENT)
+--- a/nvidia/os-interface.c
++++ b/nvidia/os-interface.c
+@@ -750,8 +750,9 @@
+ void NV_API_CALL os_get_current_process_name(char *buf, NvU32 len)
+ {
+     task_lock(current);
+-    strncpy(buf, current->comm, len - 1);
+-    buf[len - 1] = '\0';
++    if (strscpy(buf, current->comm, len) < 0) {
++        // strscpy() returns -E2BIG on truncation, which is acceptable here.
++    }
+     task_unlock(current);
+ }
+ 
+--- a/nvidia/linux_nvswitch.c
++++ b/nvidia/linux_nvswitch.c
+@@ -2026,7 +2026,7 @@
+         return -NVL_ERR_GENERIC;
+     }
+ 
+-    strncpy(regkey_val, regkey_val_start, regkey_val_len);
++    memcpy(regkey_val, regkey_val_start, regkey_val_len);
+     regkey_val[regkey_val_len] = '\0';
+ 
+     if (nvswitch_os_strtouint(regkey_val, data) != 0)
+@@ -2381,7 +2381,13 @@
+     NvLength length
+ )
+ {
+-    return strncpy(dest, src, length);
++    NvLength i;
++
++    for (i = 0; i < length && src[i] != '\0'; i++)
++        dest[i] = src[i];
++    for (; i < length; i++)
++        dest[i] = '\0';
++    return dest;
+ }
+ 
+ int
+--- a/nvidia-modeset/nvidia-modeset-linux.c
++++ b/nvidia-modeset/nvidia-modeset-linux.c
+@@ -351,7 +351,13 @@
+ 
+ char* nvkms_strncpy(char *dest, const char *src, size_t n)
+ {
+-    return strncpy(dest, src, n);
++    size_t i;
++
++    for (i = 0; i < n && src[i] != '\0'; i++)
++        dest[i] = src[i];
++    for (; i < n; i++)
++        dest[i] = '\0';
++    return dest;
+ }
+ 
+ void nvkms_usleep(NvU64 usec)
+--- a/nvidia-uvm/uvm_pmm_gpu.c
++++ b/nvidia-uvm/uvm_pmm_gpu.c
+@@ -3038,7 +3038,7 @@
+             size_t size;
+             size_t align;
+             if (level == 0) {
+-                strncpy(chunk_split_cache[level].name, "uvm_gpu_chunk_t", sizeof(chunk_split_cache[level].name) - 1);
++                strscpy(chunk_split_cache[level].name, "uvm_gpu_chunk_t", sizeof(chunk_split_cache[level].name));
+                 size = sizeof(uvm_gpu_chunk_t);
+                 align = __alignof__(uvm_gpu_chunk_t);
+             } else {
+--- a/nvidia-drm/nvidia-drm-conftest.h
++++ b/nvidia-drm/nvidia-drm-conftest.h
+@@ -215,4 +215,41 @@
+ 
+ #endif /* defined(NV_BSD) */
+ 
++/*
++ * Linux 7.2 renamed struct drm_atomic_state to struct drm_atomic_commit and
++ * the helpers that operate on it. Map the old names onto the new ones.
++ */
++#include <linux/version.h>
++#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)
++#define drm_atomic_state                        drm_atomic_commit
++#define drm_atomic_state_alloc                  drm_atomic_commit_alloc
++#define drm_atomic_state_get                    drm_atomic_commit_get
++#define drm_atomic_state_put                    drm_atomic_commit_put
++#define drm_atomic_state_free                   drm_atomic_commit_put
++#define drm_atomic_state_clear                  drm_atomic_commit_clear
++#define drm_atomic_state_default_clear          drm_atomic_commit_default_clear
++#define drm_atomic_state_default_release        drm_atomic_commit_default_release
++#define drm_atomic_state_init                   drm_atomic_commit_init
++
++/*
++ * The configure-time probes below look for struct drm_atomic_state, which no
++ * longer exists, so they report the pre-7.2 behavior. Force the 7.2 behavior.
++ */
++#if !defined(NV_DRM_PLANE_ATOMIC_CHECK_HAS_ATOMIC_STATE_ARG)
++#define NV_DRM_PLANE_ATOMIC_CHECK_HAS_ATOMIC_STATE_ARG
++#endif
++#if !defined(NV_DRM_CRTC_ATOMIC_CHECK_HAS_ATOMIC_STATE_ARG)
++#define NV_DRM_CRTC_ATOMIC_CHECK_HAS_ATOMIC_STATE_ARG
++#endif
++#if !defined(NV_DRM_ATOMIC_STATE_REF_COUNTING_PRESENT)
++#define NV_DRM_ATOMIC_STATE_REF_COUNTING_PRESENT
++#endif
++#if !defined(NV_DRM_ATOMIC_HELPER_SWAP_STATE_HAS_STALL_ARG)
++#define NV_DRM_ATOMIC_HELPER_SWAP_STATE_HAS_STALL_ARG
++#endif
++#if !defined(NV_DRM_ATOMIC_HELPER_SWAP_STATE_RETURN_INT)
++#define NV_DRM_ATOMIC_HELPER_SWAP_STATE_RETURN_INT
++#endif
++#endif
++
+ #endif /* defined(__NVIDIA_DRM_CONFTEST_H__) */

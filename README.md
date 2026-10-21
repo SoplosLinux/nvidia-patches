@@ -9,6 +9,7 @@ Collection of NVIDIA DKMS fixes and patch files for Soplos Linux kernels (7.x) a
 | NVIDIA DKMS fails on Soplos kernel 7.x (`VMA_LOCK_OFFSET` / `__is_vma_write_locked` errors) | `patches/nvidia-*-kernel7.patch` |
 | NVIDIA DKMS fails on Soplos kernel 7.2+ (`implicit declaration of function 'strncpy'` in `os-interface.c`) | `patches/nvidia-string-h-kernel7.2.patch` |
 | NVIDIA DKMS fails on Soplos kernel 7.3+ (`-Wint-conversion` en `dmem_cgroup_register_region`, `os-interface.c`) | `patches/nvidia-dmem-kernel7.3.patch` |
+| NVIDIA 550 (Debian `nvidia-kernel-dkms`) fails on kernel 7.2+ (`linux/of_gpio.h` missing, `strncpy` undeclared, `drm_atomic_state` errors in `nvidia-drm`) | `patches/nvidia-550-kernel7.2-compat.patch` |
 | NVIDIA DKMS fails on Debian kernel 7.0.4+ (`awk: invalid char '''` in BTF build) | `scripts/debian-7.0.4/` |
 | NVIDIA DKMS fails on Debian kernel 7.0.7+ (same BTF error, different path) | `scripts/debian-7.0.7/` |
 | NVIDIA DKMS fails on Debian kernel 7.0.13+ (same BTF error) | `scripts/debian-7.0.13/` |
@@ -35,6 +36,8 @@ patches/
                                      (version-independent, applies to any NVIDIA driver branch)
   nvidia-dmem-kernel7.3.patch   — dmem_cgroup_register_region() API fix for NVIDIA 610 (open)
                                      on kernel 7.3+ (only affects the open driver, Turing/RTX and newer)
+  nvidia-550-kernel7.2-compat.patch — of_gpio.h, strncpy and DRM atomic commit fixes for NVIDIA 550
+                                     (Debian) on kernel 7.2+, compile-tested on 7.3
 
 scripts/
   debian-7.0.4/
@@ -121,6 +124,12 @@ sudo patch --fuzz=5 -p1 -d /usr/src/nvidia-${NVIDIA_VER} < patches/nvidia-string
 Version-independent — the missing include is the same regardless of NVIDIA driver branch
 (550/580/590/610), so there is only one patch file for this fix, unlike Fix 1.
 
+**Correction (2026-10-21):** the diagnosis above is incomplete. `strncpy()` is not just
+undeclared because of a missing include: its prototype was removed from `include/linux/string.h`
+between kernel 7.1 (`extern char * strncpy(...)` is there) and 7.2 (it is not). Adding the include
+therefore does not make `strncpy()` available on 7.2+ for sources that still call it
+(550.163.01 and 590.48.01 do; 610 already uses `strscpy()`). See Fix 6.
+
 ---
 
 ## Fix 5 — `dmem_cgroup_register_region()` nueva firma (Soplos kernel 7.3+)
@@ -157,6 +166,54 @@ sudo patch --fuzz=5 -p1 -d /usr/src/nvidia-${NVIDIA_VER}/kernel-open < patches/n
 ```
 
 La rama `#else` conserva la llamada original intacta para kernel ≤ 7.2, por lo que el parche es seguro en cualquier versión. Las ramas 550/580/590 no se ven afectadas porque el bloque `#if defined(NV_USE_DMEM_CGROUP_API)` no existe en esas fuentes.
+
+---
+
+## Fix 6 — NVIDIA 550 on kernels 7.1 to 7.3 (`of_gpio.h`, `strncpy`, DRM atomic commit)
+
+**Affects:** NVIDIA 550.163.01 as shipped by Debian (`nvidia-kernel-dkms`, proprietary kernel modules).
+NVIDIA 590.48.01 has the same first two problems and is not patched here yet. NVIDIA 610 already
+carries all of these fixes upstream.
+
+**Errors in DKMS make.log:**
+```
+common/inc/nv-linux.h: fatal error: linux/of_gpio.h: No such file or directory
+nvidia/os-interface.c: error: implicit declaration of function 'strncpy' [-Wimplicit-function-declaration]
+nvidia-drm/nvidia-drm-drv.c:224: error: initialization of 'struct drm_atomic_commit * (*)(struct drm_device *)'
+  from incompatible pointer type 'struct drm_atomic_state * (*)(struct drm_device *)'
+```
+
+**Root cause:** three independent kernel changes.
+
+1. `include/linux/of_gpio.h` was removed: it exists in 7.0 and not in 7.1, 7.2 or 7.3.
+   NVIDIA 610 handles it with a compatibility block for `of_get_named_gpio()`; 550 includes the header unconditionally.
+2. `strncpy()` was removed from `include/linux/string.h` between 7.1 and 7.2 (see the correction under Fix 4).
+   550.163.01 calls it in five places (`os-interface.c`, `linux_nvswitch.c` twice, `nvidia-modeset-linux.c`, `uvm_pmm_gpu.c`).
+3. `struct drm_atomic_state` was renamed `struct drm_atomic_commit` in 7.2, together with `drm_atomic_state_alloc()`,
+   `_get()`, `_put()`, `_clear()`, `_init()`, `_default_clear()` and `_default_release()`.
+   NVIDIA's configure-time probes (`conftest.sh`) look for the old struct, so they report the pre-7.2
+   behavior; five of them are forced for 7.2+: `NV_DRM_PLANE_ATOMIC_CHECK_HAS_ATOMIC_STATE_ARG`,
+   `NV_DRM_CRTC_ATOMIC_CHECK_HAS_ATOMIC_STATE_ARG`, `NV_DRM_ATOMIC_STATE_REF_COUNTING_PRESENT`,
+   `NV_DRM_ATOMIC_HELPER_SWAP_STATE_HAS_STALL_ARG` and `NV_DRM_ATOMIC_HELPER_SWAP_STATE_RETURN_INT`.
+
+**Fix:** apply the patch from the root of the DKMS source tree of the NVIDIA 550 package (the directory under
+`/usr/src` that contains `Kbuild`, `common/` and `nvidia/`):
+
+```bash
+sudo patch --fuzz=5 -p1 -d /usr/src/<nvidia-550-source-dir> < patches/nvidia-550-kernel7.2-compat.patch
+```
+
+The `strncpy()` replacements keep its behavior (copy up to `n` characters and pad with zeros), the
+`of_gpio.h` block is selected with `__has_include()` and the DRM block is guarded by
+`LINUX_VERSION_CODE >= KERNEL_VERSION(7, 2, 0)`, so the patch does not change the build on older kernels.
+
+**Verified 2026-10-21 (compile only):** Debian forky `nvidia-kernel-source 550.163.01-5.1` built with gcc 16.2
+against the headers of `7.3.0-soplos-bore-ntsync-v4` and of `7.2.11-soplos-bore-ntsync-v4`.
+Unpatched, the build fails on both (on 7.3 with thousands of errors, the first one being `of_gpio.h`; on 7.2.11 it
+stops at the first failing object, `strncpy()` in `os-interface.c`); patched, it builds `nvidia.ko`,
+`nvidia-modeset.ko`, `nvidia-drm.ko`, `nvidia-uvm.ko` and `nvidia-peermem.ko` on both. The patch applies cleanly to the
+original sources with `printf '%s' | patch --fuzz=5 -p1 -d <dir>`, as the Soplos tools do. The modules were not loaded on
+hardware, and kernel 7.1 was not tested.
 
 ---
 
