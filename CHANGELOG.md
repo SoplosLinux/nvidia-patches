@@ -8,6 +8,26 @@ All notable changes to this project will be documented in this file.
 > today reflect file timestamps, not commit history (git is not used to
 > inspect this repo's history).
 
+## 1.4.1 — 2026-10-21
+
+### Fixed
+
+- **Fix 5** (`patches/nvidia-dmem-kernel7.3.patch`) never applied. Its hunk header
+  declared `-2818,7 +2818,17` (7 old and 17 new lines) while the body has 6 and 15,
+  so `patch` stopped with `malformed patch at line 18` and nothing was changed. The
+  same text was embedded in Soplos Welcome 2.x and 3.0, Soplos Kernel Installer and
+  its dev tool, and the install scripts only print a warning when a patch fails, so
+  nobody noticed. The header is now `@@ -2818,6 +2818,15 @@` in this file and in the
+  four embedded copies.
+- Verified against the real NVIDIA 610.57.04 sources (the function is at line 2818 of
+  `kernel-open/nvidia/os-interface.c`) and the Linux 7.3 headers
+  (`struct dmem_cgroup_init` has `size`, `ops` and `reclaim_priv`): the patch applies
+  cleanly, and the whole module builds with gcc 16.2 against
+  `7.3.0-soplos-bore-ntsync-v4`. The unpatched sources reproduce the DKMS failure
+  users reported: `os-interface.c:2820: passing argument 1 of
+  'dmem_cgroup_register_region' makes pointer from integer without a cast
+  [-Wint-conversion]`.
+
 ## 1.4.0 — 2026-10-20
 
 ### Added

@@ -1,6 +1,6 @@
 --- a/kernel-open/nvidia/os-interface.c
 +++ b/kernel-open/nvidia/os-interface.c
-@@ -2818,7 +2818,17 @@
+@@ -2818,6 +2818,15 @@
  void* NV_API_CALL os_dmem_cgroup_register_region(NvU64 size, const char *name)
  {
 +#if LINUX_VERSION_CODE >= KERNEL_VERSION(7, 3, 0)
