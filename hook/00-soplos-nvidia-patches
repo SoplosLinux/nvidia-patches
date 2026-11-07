@@ -1,0 +1,157 @@
+#!/bin/sh
+# Soplos NVIDIA patches hook.
+#
+# Downloads the latest patches of the nvidia-patches project and applies them to
+# the sources of the NVIDIA driver that DKMS builds (/usr/src/nvidia-*), so the
+# module builds against the kernel that is being installed.
+#
+# Install it as /etc/kernel/postinst.d/00-soplos-nvidia-patches and as
+# /etc/kernel/header_postinst.d/00-soplos-nvidia-patches. The name sorts before
+# "dkms" on purpose: the DKMS hook of Debian runs after it.
+#
+# - It does nothing when there are no NVIDIA sources in /usr/src.
+# - The patches come from the MANIFEST of the project: a file is only kept when
+#   its sha256 is the one in the MANIFEST. A failed download is not an error:
+#   the patches downloaded before are used.
+# - Every patch is skipped when it is already in the sources, when the sources
+#   do not need it or when it does not apply cleanly (checked with --dry-run).
+# - It never makes the installation of a kernel fail. What it does is written to
+#   /var/log/soplos-nvidia-patches.log.
+
+URL="${SOPLOS_NVIDIA_PATCHES_URL:-https://raw.githubusercontent.com/SoplosLinux/nvidia-patches/main/patches}"
+CACHE="${SOPLOS_NVIDIA_CACHE:-/var/lib/soplos-nvidia-patches}"
+SOURCES="${SOPLOS_NVIDIA_SOURCES:-/usr/src}"
+LOG="${SOPLOS_NVIDIA_LOG:-/var/log/soplos-nvidia-patches.log}"
+TIMEOUT=10
+
+log() {
+    printf '%s %s\n' "$(date '+%Y-%m-%d %H:%M:%S')" "$*" >>"$LOG" 2>/dev/null
+    printf 'soplos-nvidia-patches: %s\n' "$*" >&2
+}
+
+# Nothing to do on a computer that has no NVIDIA sources.
+found=0
+for src in "$SOURCES"/nvidia-*/; do
+    [ -d "$src" ] && found=1
+done
+[ "$found" = 1 ] || exit 0
+
+mkdir -p "$CACHE" 2>/dev/null
+
+# ── 1. The latest patches ────────────────────────────────────────────────────
+
+sum_of() {
+    sha256sum "$1" 2>/dev/null | cut -d' ' -f1
+}
+
+work="$(mktemp -d 2>/dev/null)"
+if [ -n "$work" ] && command -v curl >/dev/null 2>&1 \
+    && curl -fsS --max-time "$TIMEOUT" -o "$work/MANIFEST" "$URL/MANIFEST" 2>/dev/null; then
+    while read -r sum name; do
+        # Only what the MANIFEST of the project can name: a plain file name.
+        case "$name" in
+            "" | *[!A-Za-z0-9._-]* | .*) continue ;;
+            *.patch) ;;
+            *) continue ;;
+        esac
+        case "$sum" in
+            "" | *[!0-9a-f]*) continue ;;
+        esac
+        [ "${#sum}" -eq 64 ] || continue
+        [ "$(sum_of "$CACHE/$name")" = "$sum" ] && continue
+        if curl -fsS --max-time "$TIMEOUT" -o "$work/$name" "$URL/$name" 2>/dev/null \
+            && [ "$(sum_of "$work/$name")" = "$sum" ]; then
+            mv -f "$work/$name" "$CACHE/$name"
+            log "downloaded $name"
+        else
+            log "warning: $name could not be downloaded, or it is not the one of the MANIFEST"
+        fi
+    done <"$work/MANIFEST"
+else
+    log "the latest patches could not be downloaded: using the ones downloaded before"
+fi
+if [ -n "$work" ]; then
+    rm -f "$work"/* 2>/dev/null
+    rmdir "$work" 2>/dev/null
+fi
+
+if ! ls "$CACHE"/*.patch >/dev/null 2>&1; then
+    log "there are no patches to apply"
+    exit 0
+fi
+
+# ── 2. Applying them ─────────────────────────────────────────────────────────
+
+# try_apply FILE ROOT STRIP LABEL
+try_apply() {
+    [ -f "$1" ] || { log "warning: $4 is not in $CACHE"; return 1; }
+    if patch --batch --fuzz=5 -p"$3" -d "$2" --dry-run <"$1" >/dev/null 2>&1; then
+        if patch --batch --fuzz=5 -p"$3" -d "$2" <"$1" >/dev/null 2>&1; then
+            log "applied $4 to $2"
+            return 0
+        fi
+        log "warning: $4 failed in $2, DKMS may fail"
+        return 1
+    fi
+    log "warning: $4 does not apply cleanly to $2, DKMS may fail"
+    return 1
+}
+
+patch_root() {
+    root="$1"
+
+    # Linux 7.0 removed VMA_LOCK_OFFSET. 550 and 610 share one patch, 580 and 590 the other.
+    mmap="$root/nvidia/nv-mmap.c"
+    if [ -f "$mmap" ] && ! grep -q 'VM_REFCNT_EXCLUDE_READERS_FLAG' "$mmap" 2>/dev/null \
+        && grep -q 'VMA_LOCK_OFFSET' "$mmap" 2>/dev/null; then
+        try_apply "$CACHE/nvidia-610-kernel7.patch" "$root" 1 "the VMA lock patch" \
+            || try_apply "$CACHE/nvidia-590-kernel7.patch" "$root" 1 "the VMA lock patch (580 and 590)"
+    fi
+
+    osif="$root/nvidia/os-interface.c"
+    [ -f "$osif" ] || return 0
+
+    # Linux 7.2: the prototype of strncpy is gone from string.h.
+    if ! grep -q '#include <linux/string.h>' "$osif" 2>/dev/null; then
+        try_apply "$CACHE/nvidia-string-h-kernel7.2.patch" "$root" 1 "the string.h patch"
+    fi
+
+    # Linux 7.3: dmem_cgroup_register_region takes a struct. The patch carries
+    # the kernel-open/ prefix, so two components are stripped.
+    if grep -q 'NV_USE_DMEM_CGROUP_API' "$osif" 2>/dev/null \
+        && ! grep -q 'dmem_cgroup_register_region(&init' "$osif" 2>/dev/null \
+        && grep -q 'dmem_cgroup_register_region(size' "$osif" 2>/dev/null; then
+        try_apply "$CACHE/nvidia-dmem-kernel7.3.patch" "$root" 2 "the dmem cgroup patch"
+    fi
+
+    linuxh="$root/common/inc/nv-linux.h"
+    [ -f "$linuxh" ] || return 0
+    if ! grep -q '__has_include(<linux/of_gpio.h>)' "$linuxh" 2>/dev/null \
+        && grep -q '^#include <linux/of_gpio.h>' "$linuxh" 2>/dev/null \
+        && grep -q 'strncpy(buf, current->comm, len - 1)' "$osif" 2>/dev/null; then
+        if grep -q 'NV_LINUX_OF_GPIO_H_PRESENT' "$linuxh" 2>/dev/null; then
+            # Debian 550.
+            try_apply "$CACHE/nvidia-550-kernel7.2-compat.patch" "$root" 1 "the 550 kernel 7.2 patch"
+        elif [ -f "$root/nvidia-uvm/uvm_hmm.c" ]; then
+            # The open 590 modules.
+            try_apply "$CACHE/nvidia-590-kernel7.2-compat.patch" "$root" 1 "the 590 kernel 7.2 patch"
+        fi
+    fi
+}
+
+for src in "$SOURCES"/nvidia-*/; do
+    [ -d "$src" ] || continue
+    src="${src%/}"
+    patch_root "$src"
+    [ -d "$src/kernel-open" ] && patch_root "$src/kernel-open"
+done
+
+# A kernel built with LLVM needs its toolchain to build the module. It cannot be
+# installed from here: dpkg holds the lock while this runs.
+if [ -n "${1:-}" ] && grep -q 'CONFIG_CC_IS_CLANG=y' "/boot/config-$1" 2>/dev/null; then
+    if ! command -v clang >/dev/null 2>&1 || ! command -v ld.lld >/dev/null 2>&1; then
+        log "warning: the kernel $1 was built with clang and the NVIDIA module needs it: apt install clang lld llvm"
+    fi
+fi
+
+exit 0

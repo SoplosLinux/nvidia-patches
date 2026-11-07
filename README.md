@@ -64,6 +64,37 @@ scripts/
 
 ---
 
+## Hook — download and apply the latest patches
+
+`hook/00-soplos-nvidia-patches` downloads the latest patches of this project and applies
+them to the NVIDIA sources that DKMS builds (`/usr/src/nvidia-*`), so the module builds against
+the kernel that is being installed, also when the system is updated from a terminal.
+
+Install it in both directories (the name sorts before `dkms`, so the DKMS hook of Debian runs after it):
+
+```bash
+sudo install -m 755 hook/00-soplos-nvidia-patches /etc/kernel/postinst.d/00-soplos-nvidia-patches
+sudo install -m 755 hook/00-soplos-nvidia-patches /etc/kernel/header_postinst.d/00-soplos-nvidia-patches
+```
+
+- It does nothing on a computer with no NVIDIA sources in `/usr/src`.
+- The files come from `patches/` of this repository, listed with their sha256 in `patches/MANIFEST`.
+  A file is only kept when its sha256 is the one of the MANIFEST. With no network, or when a download
+  fails, the patches downloaded before (kept in `/var/lib/soplos-nvidia-patches`) are used.
+- Every patch is skipped when it is already in the sources, when the sources do not need it or when
+  `patch --dry-run` says it does not apply cleanly. The conditions are those of Soplos Welcome and
+  Soplos Kernel Installer.
+- It never makes the installation of a kernel fail. The log is `/var/log/soplos-nvidia-patches.log`.
+
+**When a patch is added or changed in `patches/`, the MANIFEST has to be made again**, or the hook will
+not take the change:
+
+```bash
+cd patches && sha256sum *.patch > MANIFEST
+```
+
+---
+
 ## Fix 1 — VMA locking API (Soplos kernels 7.x)
 
 **Error in DKMS make.log:**

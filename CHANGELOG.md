@@ -8,6 +8,13 @@ All notable changes to this project will be documented in this file.
 > today reflect file timestamps, not commit history (git is not used to
 > inspect this repo's history).
 
+## 1.6.0 — 2026-11-07
+
+### Added
+
+- `hook/00-soplos-nvidia-patches`: a kernel hook that downloads the latest patches of this project and applies them to `/usr/src/nvidia-*` before the DKMS hook of Debian builds the module. The files are checked against `patches/MANIFEST` (sha256), the patches downloaded before are used when there is no network, and each patch is skipped when it is already applied, not needed or does not apply cleanly (`--dry-run`). It never makes the installation of a kernel fail.
+- `patches/MANIFEST`: the sha256 of every patch. It has to be made again when a patch changes.
+
 ## 1.5.0 — 2026-10-21
 
 ### Added
